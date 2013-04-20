@@ -6,7 +6,7 @@ import psutil
 import re
 import time
 
-__module_name__ = "Smart Alerts"
+__module_name__ = "smartAlert"
 __module_version__ = "1.1"
 __module_description__ = "Customize XChat Alerting + Logging"
 
@@ -22,11 +22,13 @@ class Rules(dict):
                       'eat': xchat.EAT_NONE},
                       {'users': ['meow_bot'],
                       'callback': self._maas_alert_bot},
-                      {'users': ['jnott', 'tildedave'],
+                      {'channels': ['#ubuntu', '#puppet', '#asd'],
                       'callback': self._anymessage},
                       )
 
-        self.alerts = {'maas_issue': {'timeout': 120}}
+        # used for alert timout queues in callback methods
+        self.alerts = {'maas_issue': {'timeout': 120},
+                       'nicks_user': {'timeout': 30}}
 
     def eat(self, rule):
         if 'eat' in self.rules[rule].keys():
@@ -69,6 +71,12 @@ class Rules(dict):
         else:
             return None
 
+    def _test(self, scope, user, channel, string):
+        if self._alert_timeout('nicks_user'):
+            message = string
+            title = "You"
+            return {'notif': 'Notify', 'message': message, 'title': title}
+
     def _hosting_matrix_etl(self, scope, user, channel, string):
         reg = re.compile('(.*) - (SUCCESS|INFO|ALERT|.*) - - HMDB ETL \((.*)\) (.*)')
         match = reg.match(string)
@@ -79,29 +87,31 @@ class Rules(dict):
         return result
 
     def _maas_alert_bot(self, scope, user, channel, string):
-        if self._alert_seen('maas_issue'):
-            #format alert
-            pass
+        if self._alert_timeout('maas_issue'):
+            message = string
+            title = "MaaS Alert"
+            return {'notif': 'Alert', 'message': message, 'title': title}
         else:
             return False
 
     def _anymessage(self, scope, user, channel, string):
-        result = channel + " >> " + user + ': ' + string
+        result = None
+        if self._alert_timeout('nicks_user'):
+            result = channel + " >> " + user + ': ' + string
         return result
 
     # Checks for timeout, returns true if timeout met or false if timeout still in effect.
-    def _alert_seen(self, name):
+    # Name string, an key of self.alerts "[name]", may be shared between callbacks if desired.
+    def _alert_timeout(self, name):
         now = int(time.time())
         if 'timeout' in self.alerts[name].keys():
             timeout = self.alerts[name]['timeout']
-            seen = self.alerts.get('seen', 0)
-            if seen > 0 and now > seen + timeout:
+            seen = self.alerts[name].setdefault('seen', now)
+            if now > seen + timeout:
                 self.alerts[name]['seen'] = now
                 return True
             else:
                 return False
-        else:
-            self.alerts[name]['seen'] = now
 
 
 class SmartAlert():
@@ -112,7 +122,7 @@ class SmartAlert():
         self.rules = rules
         self.alerters = []
         self.os = platform.system()
-        if self.os == 'Darwin': # Handle special osx container setup
+        if self.os == 'Darwin':  # Handle special osx container setup
             self.icon = os.getenv("HOME") + "/xchat.png"
         else:
             self.icon = None
@@ -150,7 +160,7 @@ class SmartAlert():
         if matched:
             if 'callback' in matched:
                 notify = matched['callback'](scope, user, channel, message)
-                if not type(notify) == dict:
+                if not type(notify) == dict and notify is not None:
                     notify = {"message": notify, 'title': 'Misc', 'notif': 'Notify'}
             else:
                 #simulated response object... Used if I don't care to callback
@@ -205,6 +215,7 @@ alerts = SmartAlert(rules)
 
 # Hook Print Events
 print __module_name__ + ": Loading hooks" + sufix
+
 # Possible Event binds:
 # Your Message
 # Message Send -- when sending a priv message
