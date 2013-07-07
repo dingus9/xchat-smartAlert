@@ -5,10 +5,10 @@ import platform
 import psutil
 import re
 import time
-import threading
+#import threading
 
 __module_name__ = "smartAlert"
-__module_version__ = "1.1"
+__module_version__ = "1.5"
 __module_description__ = "Customize XChat Alerting + Logging"
 
 
@@ -115,18 +115,19 @@ class Rules(dict):
         if self._alert_timeout('maas_issue'):
             message = None
             if user == 'meow_bot':
-                reg = re.compile('(.+) (.+) (.+): (.+) (.+) - (.+):([0-9]{3}) .+').match(string)
-                match = reg.match(string)
-                groups = match.groups()
-                if len(groups) > 4:
-                    message = user + ':' + groups[2] + ' ' + groups[3] + ':' + groups[4]\
-                        + ':' + groups[5]
+                match = re.compile('(.+) (.+) (.+): (.+) (.+) - (.+):([0-9]{3}) .+').match(string)
+                if match:
+                    groups = match.groups()
+                    if len(groups) > 4:
+                        message = user + ':' + groups[2] + ' ' + groups[3] + ':' + \
+                            groups[4] + ':' + groups[5]
             elif user == 'maas-bot':
-                groups = re.compile('(.+) (.+) (.+): (.+) (.+) - .+Found:([0-9]{3}) .+')\
-                    .match(string).groups()
-                if len(groups) > 3:
-                    message = user + ':' + groups[2] + ' ' + groups[3] + ':' + groups[4]\
-                        + ':' + groups[5]
+                match = re.compile('(.+) (.+) (.+): (.+) (.+) - .+Found:([0-9]{3}) .+').match(string)
+                if match:
+                    groups = match.groups()
+                    if len(groups) > 3:
+                        message = user + ':' + groups[2] + ' ' + groups[3] + ':' + \
+                            groups[4] + ':' + groups[5]
             title = "MaaS Alert"
             if message:
                 return {'notif': 'Alert', 'message': message, 'title': title}
@@ -184,6 +185,8 @@ class SmartAlert():
         self.appname = pid.name
         self.rules = rules
         self.alerters = []
+        self.hooked = []
+        self.hooked_timer = None
         self.os = platform.system()
         if self.os == 'Darwin':  # Handle special osx container setup
             self.icon = os.getenv("HOME") + "/xchat.png"
@@ -198,10 +201,16 @@ class SmartAlert():
 
     def command(self, word, word_eol, userdata):
         command = word[0]
-        params = word.get(1, None)
+        if len(word) > 1:
+            params = word[1]
+        else:
+            params = ''
+            print "usage: " + command + " hooked | rehook"
 
-        if params == 'hooks':
+        if params == 'hooked':
             print self.hooked
+        elif params == 'rehook':
+            self.xchatHook()
         return xchat.EAT_ALL
 
     def addAlerter(self, alerter):
@@ -221,6 +230,10 @@ class SmartAlert():
         elif len(word) == 3 and word[2] == '@':
             user = word[0]
             message = word[1]
+        else:
+            user = ''
+            message = ''
+            print word
         channel = xchat.get_info('channel')
         scope = xchat.get_info('server')
         self.base_message(user, message, channel, scope)
@@ -264,19 +277,35 @@ class SmartAlert():
         nick = xchat.get_info('nick')
         if word[0].find(nick) > -1:
             timeout = 3
-            for handler in self.hooked:
-                xchat.unhook(handler)
-            self.hooked = []
+            if len(self.hooked):
+                for handler in self.hooked:
+                    xchat.unhook(handler)
+                self.hooked = []
             self._hook_wait = time.time()
-            threading.Timer(timeout, self._xchatHookTest, (timeout, )).run()
+            if not self.hooked_timer:
+                print 'register hook timer'
+                self.hooked_timer = xchat.hook_timer(timeout * 1000,
+                                                     self._xchatHookTest,
+                                                     (timeout))
+            #threading.Timer(timeout, self._xchatHookTest, (timeout, )).run()
 
     # Used in joiner above
     def _xchatHookTest(self, timeout):
+        print 'hooked timer'
+        print time.time()
+        print self._hook_wait
+        print timeout
         if time.time() >= self._hook_wait + timeout:
+            if self.hooked_timer:
+                print 'hooked timer unhooked'
+                xchat.unhook(self.hooked_timer)
+                self.hooked_timer = None
             self.xchatHook()
 
     def xchatHook(self):
-        self.hooked = [xchat.hook_print('Channel Message', alerts.general_message,
+        print 'rehooking'
+        if not len(self.hooked):
+            self.hooked = [xchat.hook_print('Channel Message', alerts.general_message,
                                         userdata=None, priority=xchat.PRI_NORM),
                        xchat.hook_print('Channel Msg Hilight', alerts.general_message,
                                         userdata=None, priority=xchat.PRI_NORM),
@@ -338,7 +367,7 @@ print __module_name__ + ": Loading hooks" + sufix
 
 # add channel hooks on join... also unloads and reloads every join...
 # prevents floods!
-xchat.hook_command('SMRTA', alerts.command, userdata=None, priority=xchat.PRI_HIGHEST)
+xchat.hook_command('SMARTALERT', alerts.command, userdata=None, priority=xchat.PRI_HIGHEST)
 xchat.hook_server('JOIN', alerts.joiner, userdata=None, priority=xchat.PRI_HIGHEST)
 alerts.xchatHook()
 xchat.hook_unload(alerts.unload)
